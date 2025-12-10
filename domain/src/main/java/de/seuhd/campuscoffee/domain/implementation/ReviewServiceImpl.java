@@ -1,7 +1,13 @@
 package de.seuhd.campuscoffee.domain.implementation;
 
 import de.seuhd.campuscoffee.domain.configuration.ApprovalConfiguration;
+import de.seuhd.campuscoffee.domain.exceptions.MissingFieldException;
+import de.seuhd.campuscoffee.domain.exceptions.NotFoundException;
+import de.seuhd.campuscoffee.domain.exceptions.ValidationException;
+import de.seuhd.campuscoffee.domain.model.objects.OsmNode;
+import de.seuhd.campuscoffee.domain.model.objects.Pos;
 import de.seuhd.campuscoffee.domain.model.objects.Review;
+import de.seuhd.campuscoffee.domain.model.objects.User;
 import de.seuhd.campuscoffee.domain.ports.api.ReviewService;
 import de.seuhd.campuscoffee.domain.ports.data.CrudDataService;
 import de.seuhd.campuscoffee.domain.ports.data.PosDataService;
@@ -15,7 +21,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 
 /**
- * Implementation of the Review service that handles business logic related to review entities.
+ * Implementation of the Review service that handles business logic related to
+ * review entities.
  */
 @Slf4j
 @Service
@@ -23,13 +30,13 @@ public class ReviewServiceImpl extends CrudServiceImpl<Review, Long> implements 
     private final ReviewDataService reviewDataService;
     private final UserDataService userDataService;
     private final PosDataService posDataService;
-    // TODO: Try to find out the purpose of this class and how it is connected to the application.yaml configuration file.
+    
     private final ApprovalConfiguration approvalConfiguration;
 
     public ReviewServiceImpl(@NonNull ReviewDataService reviewDataService,
-                             @NonNull UserDataService userDataService,
-                             @NonNull PosDataService posDataService,
-                             @NonNull ApprovalConfiguration approvalConfiguration) {
+            @NonNull UserDataService userDataService,
+            @NonNull PosDataService posDataService,
+            @NonNull ApprovalConfiguration approvalConfiguration) {
         super(Review.class);
         this.reviewDataService = reviewDataService;
         this.userDataService = userDataService;
@@ -45,7 +52,14 @@ public class ReviewServiceImpl extends CrudServiceImpl<Review, Long> implements 
     @Override
     @Transactional
     public @NonNull Review upsert(@NonNull Review review) {
-        // TODO: Implement the missing business logic here
+        
+        if(posDataService.getById(review.pos().getId()) == null){
+            throw new NotFoundException(Pos.class, review.pos().getId());
+        }
+
+        if(reviewDataService.filter(review.pos(), review.author()).size() > 0 ){
+            throw new ValidationException("Same user cant add multiple reviews to same POS");
+        };
 
         return super.upsert(review);
     }
@@ -63,26 +77,51 @@ public class ReviewServiceImpl extends CrudServiceImpl<Review, Long> implements 
                 review.getId(), userId);
 
         // validate that the user exists
-        // TODO: Implement the required business logic here
+       
+        try {
+            userDataService.getById(userId);
+        } catch (NotFoundException e) {
+            log.error("Could not find user ", userId);
+            throw new NotFoundException(User.class, userId);
+        }
 
         // validate that the review exists
-        // TODO: Implement the required business logic here
-
+      
+        try {
+            reviewDataService.getById(review.getId());
+        } catch (NotFoundException e) {
+            log.error("Could not find review ", review.getId());
+            throw new NotFoundException(Review.class, review.getId());
+        }
         // a user cannot approve their own review
-        // TODO: Implement the required business logic here
+       
+        if (review.author().getId() == userId){
+            throw new ValidationException("Author cant approve its own review");
+        }
 
         // increment approval count
-        // TODO: Implement the required business logic here
+       
 
-        // update approval status to determine if the review now reaches the approval quorum
-        // TODO: Implement the required business logic here
+        Integer approvals = review.approvalCount() +1;
 
-        return reviewDataService.upsert(review);
+        return reviewDataService.upsert(
+            Review.builder()
+            .id(review.id())
+            .createdAt(review.createdAt())
+            .pos(review.pos())
+            .author(review.author())
+            .review(review.review())
+            .approvalCount(approvals)
+            .approved(approvals >= approvalConfiguration.minCount() ? true : false)
+            .build()
+        );
     }
 
     /**
-     * Calculates and updates the approval status of a review based on the approval count.
-     * Business rule: A review is approved when it reaches the configured minimum approval count threshold.
+     * Calculates and updates the approval status of a review based on the approval
+     * count.
+     * Business rule: A review is approved when it reaches the configured minimum
+     * approval count threshold.
      *
      * @param review The review to calculate approval status for
      * @return The review with updated approval status
@@ -93,12 +132,13 @@ public class ReviewServiceImpl extends CrudServiceImpl<Review, Long> implements 
                 .approved(isApproved(review))
                 .build();
     }
-    
+
     /**
      * Determines if a review meets the minimum approval threshold.
      * 
      * @param review The review to check
-     * @return true if the review meets or exceeds the minimum approval count, false otherwise
+     * @return true if the review meets or exceeds the minimum approval count, false
+     *         otherwise
      */
     private boolean isApproved(Review review) {
         return review.approvalCount() >= approvalConfiguration.minCount();

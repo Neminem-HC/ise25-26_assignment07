@@ -25,8 +25,6 @@ class LoadInitialData implements InitializingBean {
     private final UserService userService;
     //private final ReviewService reviewService;
 
-    // TODO: Uncomment review-related code once the interfaces and services have been implemented.
-
     @Override
     public void afterPropertiesSet() {
         log.info("Deleting existing data...");
